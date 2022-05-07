@@ -3,7 +3,7 @@ import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer, required
 from typing import List, Optional
-from scipy.stats import levy_stable
+from scipy.stats import levy_stable, uniform
 
 class SGDLevy(Optimizer):
 
@@ -68,11 +68,11 @@ class SGDLevy(Optimizer):
                     else:
                         momentum_buffer_list.append(state['momentum_buffer'])
 
-            _single_tensor_sgd(params_with_grad,
+            _old_sgd_levy(params_with_grad,
                 d_p_list,
                 momentum_buffer_list,
-                noise_pc = group['noise_pc'],
                 alpha = group['alpha'],
+                noise_pc = group['noise_pc'],
                 weight_decay=group['weight_decay'],
                 momentum=group['momentum'],
                 lr=group['lr'],
@@ -87,7 +87,59 @@ class SGDLevy(Optimizer):
 
         return loss
 
-def _single_tensor_sgd(params: List[Tensor],
+def _sgd_levy(params: List[Tensor],
+                       d_p_list: List[Tensor],
+                       momentum_buffer_list: List[Optional[Tensor]],
+                       alpha: float,
+                       noise_pc:float,
+                       *,
+                       weight_decay: float,
+                       momentum: float,
+                       lr: float,
+                       dampening: float,
+                       nesterov: bool
+):
+    
+    """
+    Implements the actual sgd calculation.
+    """
+
+    for i, param in enumerate(params):
+
+        d_p = d_p_list[i]
+        if weight_decay != 0:
+            d_p = d_p.add(param, alpha=weight_decay)
+
+        if momentum != 0:
+            buf = momentum_buffer_list[i]
+
+            if buf is None:
+                buf = torch.clone(d_p).detach()
+                momentum_buffer_list[i] = buf
+            else:
+                buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
+
+            if nesterov:
+                d_p = d_p.add(buf, alpha=momentum)
+            else:
+                d_p = buf
+        
+        lv_noise_mag = float(levy_stable.rvs(alpha=alpha, beta=1, size=1, loc=0, scale=noise_pc))
+
+        while abs(lv_noise_mag) > noise_pc:
+            lv_noise_mag = float(levy_stable.rvs(alpha=alpha, beta=1, size=1, loc=0, scale=float(torch.norm(d_p))))
+        
+        print(float(torch.norm(d_p)), lv_noise_mag)
+
+        theta = float(uniform.rvs(loc=0, scale=2*np.pi, size=1))
+        dir = np.array([np.cos(theta), np.sin(theta)])
+        lv_noise = lv_noise_mag * torch.Tensor(dir) * torch.norm(d_p)
+        d_p.add_(lv_noise)
+
+        param.add_(d_p, alpha=-lr)
+    
+
+def _old_sgd_levy(params: List[Tensor],
                        d_p_list: List[Tensor],
                        momentum_buffer_list: List[Optional[Tensor]],
                        noise_pc: float,
