@@ -34,22 +34,18 @@ class OptimisationProblem():
         opt = self.opt
         losses, params, preds = [], [], []
         params.append(list(func.parameters())[0].detach().clone().numpy())
-        #params.append(list(func.parameters())[0].data.detach().clone().numpy())
+        update_count = self.n_epochs//10
 
         for i in range(self.n_epochs):
+            opt.zero_grad()
             pred = func()
             loss = self.metric(pred) if self.metric else pred
-            opt.zero_grad()
             loss.backward()
-            #torch.nn.utils.clip_grad_norm_(parameters, max_norm) # added this 21/04/2022 - apparently stops exploding gradients
             opt.step()
             losses.append(float(loss))
-            #print(list(func.parameters())[0])
             params.append(list(func.parameters())[0].detach().clone().numpy())
-            # params.append(list(func.parameters())[0].data.detach().clone().numpy()) # WTF CLONE CHANGES THINGS 21/04
-            # apparently this is because it changes what is saved in place - diff tensors in same place in memory if you detach
-            # want to clone if you want to save the weights i.e. parameters at each step 21/04
             preds.append(float(pred))
+            if i % update_count == 0: print(i)
         
         params = [list(_) for _ in list(zip(*params))]
 
@@ -120,16 +116,37 @@ class OptimisationProblem():
                 go.Contour(x=X, y=Y, z=Z),
                 row=1, col=2
             )
+            
+            early_cutoff = int(0.9 * self.n_epochs)
+            earlyx = self.params[0][0:early_cutoff]
+            earlyy = self.params[1][0:early_cutoff]
+            earlypreds = self.preds[0:early_cutoff]
+            latex = self.params[0][early_cutoff:]
+            latey = self.params[1][early_cutoff:]
+            latepreds = self.preds[early_cutoff:]
+
             fig.add_trace(
-                go.Scatter(x=self.params[0], 
-                           y=self.params[1],
-                           text=list(zip(self.preds, list(np.arange(0, len(self.preds)))))),
+                go.Scatter(x=earlyx, 
+                           y=earlyy,
+                           text=list(zip(earlypreds, list(np.arange(0, len(earlypreds))))),
+                           line=dict(width=1)),
                 row=1, col=2
             )
+            fig.add_trace(
+                go.Scatter(x=latex, 
+                           y=latey,
+                           text=list(zip(latepreds, list(np.arange(early_cutoff, len(self.preds))))),
+                           line=dict(width=1)),
+                row=1, col=2
+            )
+
+            title = 'ADAM/SGD' if not hasattr(self.opt, 'record') else str(self.opt.record)
+                
             fig.update_layout(
                 autosize=False,
                 width=1600,
-                height=800
+                height=800,
+                title=title
             )
             
             return fig
@@ -150,54 +167,66 @@ class OptimisationProblem():
     
 class PeriodicObjectiveFunction(nn.Module):
 
-    def __init__(self, bounds=None):
+    def __init__(self, start=None, bounds=None):
         super().__init__()
         self.bounds = bounds
+        weights = torch.Tensor(start)
+        self.weights = nn.Parameter(weights)
     
+    @torch.no_grad()
     def pbc(self, X):
+        
+        X[X >= 0] = X[X>0] - self.bounds * torch.floor(X[X>0]/self.bounds + 0.5)
+        X[X < 0] = X[X<0] - self.bounds * torch.ceil(X[X<0]/self.bounds - 0.5)
+        
+        return X
 
-        if X >= 0:
-            q = X/self.bounds
-            q = q + 0.5
-            return X - self.bounds * np.floor(q)
-        if X < 0:
-            q = X/self.bounds
-            q = q - 0.5
-            return X - self.bounds * np.ceil(q)
-
+        # if X >= 0:
+        #     q = X/self.bounds
+        #     q = q + 0.5
+        #     return X - self.bounds * np.floor(q)
+        # if X < 0:
+        #     q = X/self.bounds
+        #     q = q - 0.5
+        #     return X - self.bounds * np.ceil(q)
 
     def apply_period(self, X):
 
         if self.bounds is None:
             return X
-        X.data = X.data.apply_(self.pbc)
         
-        return X
+        #X.data = X.data.apply_(self.pbc)
+        return self.pbc(X)
+    
+    def forward_init(self, X):
+
+        if X is None:
+            X = self.weights
+
+        X_pbc = self.apply_period(X)
+
+        return X_pbc
 
 class GaussianWellModel(PeriodicObjectiveFunction):
 
     def __init__(self, start, bounds=None):
         
-        super().__init__(bounds)
-        weights = torch.Tensor(start)
-        self.weights = nn.Parameter(weights)
-        self.centers = [torch.Tensor([-6,4]), torch.Tensor([5,-2]), torch.Tensor([-4,-4])]
-        self.depths = [torch.Tensor([-0.05]), torch.Tensor([-0.05]), torch.Tensor([-0.04])]
-        self.sigmas = [torch.Tensor([3.5]), torch.Tensor([5]), torch.Tensor([5.5])]
+        super().__init__(start, bounds)
+        self.centers = [torch.Tensor([0,0]), torch.Tensor([1.5,1.5])]
+        self.depths = [torch.Tensor([-1]), torch.Tensor([-0.15])]
+        self.sigmas = [torch.Tensor([4]), torch.Tensor([2])]
         
     def forward(self, X=None):
         """
         Implement function to be optimised.
         """
 
-        if X is None:
-            X = self.weights
-        
-        X = self.apply_period(X)
+        X = self.forward_init(X)
+
         z = 0
         for c, d, s in zip(self.centers, self.depths, self.sigmas):
             v = X - c
-            z += d/(2*np.pi*s**2) * torch.exp(-torch.dot(v,v.T)/(2*s**2))
+            z += d * torch.exp(-torch.dot(v,v.T)/(2*s**2))
 
         return z
 
@@ -212,17 +241,13 @@ class AlpineN1(PeriodicObjectiveFunction):
     """
     def __init__(self, start, bounds=None):
         
-        super().__init__(bounds)
-        weights = torch.Tensor(start)
-        self.weights = nn.Parameter(weights)
+        super().__init__(start, bounds)
         
     def forward(self, X=None):
 
-        if X is None:
-            X = self.weights
-
-        X = self.apply_period(X)
+        X = self.forward_init(X)
         z = torch.abs(X*torch.sin(X) + 0.1*X)
+
         return torch.sum(z)
 
 class Ackley(PeriodicObjectiveFunction):
@@ -235,45 +260,55 @@ class Ackley(PeriodicObjectiveFunction):
 
     def __init__(self, start, bounds=None):
         
-        super().__init__(bounds)
-        weights = torch.Tensor(start)
-        self.weights = nn.Parameter(weights)
+        super().__init__(start, bounds)
         
     def forward(self, X=None):
 
-        if X is None:
-            X = self.weights
-        
-        X = self.apply_period(X)
+        X = self.forward_init(X)
         z = - 20*torch.exp(-0.2*(torch.sqrt(0.5*torch.sum(X**2)))) - torch.exp(0.5*torch.sum(torch.cos(2*torch.pi*X))) + 20 + torch.e
 
         return z
 
 
-# NOT DONE YET
-class SummationHills(PeriodicObjectiveFunction):
-
+class Rosenbrock(PeriodicObjectiveFunction):
     """
-    Hilly function composed of a sum - allows true SGD behaviour.
+    Non-symmetric minima valley.
+
+    Global minimum at x* = 1 (n-dim), f(x*) = 0.
     """
 
     def __init__(self, start, bounds=None):
 
-        pass
-
-        super().__init__(bounds)
-        weights = torch.Tensor(start)
-        self.weights = nn.Parameter(weights)
-
-        x = 1
+        super().__init__(start, bounds)
 
     def forward(self, X=None):
 
-        if X is None:
-            X = self.weights
-        
-        X = self.apply_period(X)
-        z = 0
+        X = self.forward_init(X)
+
+        X_i = torch.roll(X, 1, 0)[1:]
+        X_ip1 = X[1:]
+        z = 1*(X_ip1 - X_i**2)**2 + (1 - X_i**2)**2
+        z = torch.sum(z)
 
         return z
 
+class LinearRegression(PeriodicObjectiveFunction):
+
+    def __init__(self, start, Xdata, bounds=None):
+
+        super().__init__(start, bounds)
+        self.Xdata = Xdata
+        """
+        Xdata can be a matrix of input. Assume each row is a separate input.
+        Assume each column holds each input's corresponding coordinate.
+        """
+
+    def forward(self, w=None):
+
+        if w is None:
+            w = self.weights
+
+        ypreds = torch.matmul(self.Xdata, w[0:-1]) + w[-1]
+        ypreds = ypreds[:,None]
+
+        return ypreds

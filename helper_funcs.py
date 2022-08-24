@@ -1,8 +1,10 @@
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.figure_factory as ff
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from typing import Callable, Iterable, List
+from scipy.signal import savgol_filter
 
 def nested_list_to_vectors(arr: List):
     return [np.array(x) for x in zip(*arr)]
@@ -125,10 +127,13 @@ def tmsd_analysis(path: List[List], max_tau_ratio: float=0.5):
         tmsds.append(tmsd)
 
     tmsds = np.array(tmsds)
+    tmsds = savgol_filter(tmsds, window_length=51, polyorder=1)
+
+    diffusion_coef = derivative(np.log(taus[1:]), np.log(tmsds[1:]), 50)
 
     if len(path) == 2:
     
-        fig = make_subplots(rows=1, cols=2)
+        fig = make_subplots(rows=2, cols=2)
         fig.add_trace(
             go.Scatter(
                 x=path[0], y=path[1], 
@@ -142,6 +147,14 @@ def tmsd_analysis(path: List[List], max_tau_ratio: float=0.5):
         )
         fig['layout']['xaxis2']['title'] = '𝜏'
         fig['layout']['yaxis2']['title'] = 'tMSD'
+
+        fig.add_trace(
+            go.Scatter(x=taus, y=diffusion_coef, name='Diffusion Coefficient vs Tau'),
+            row=2, col=1
+        )
+        fig['layout']['xaxis3']['title'] = '𝜏'
+        fig['layout']['yaxis3']['title'] = 'Diffusion Coefficient'
+
         fig.update_layout(
             autosize=False,
             width=1600,
@@ -235,7 +248,7 @@ def derivative(
 ):
     if h == 1:
         return np.diff(y)/np.diff(X)
-    
+
     return diff_space(y, h)/diff_space(X, h)
 
 
@@ -394,3 +407,13 @@ def levyrandom(alpha, beta, mu=0.0, sigma=1.0, shape=()):
     k = j / (i * (h ** 2.0 + 1.0)) + e * (f - 1.0)
 
     return mu + sigma * k
+
+def create_density_plot(params):
+
+    x, y = params[0], params[1]
+    colorscale = ['#7A4579', '#D56073', 'rgb(236,158,105)', (1, 1, 0.2), (0.98,0.98,0.98)]
+    fig = ff.create_2d_density(
+        x, y, colorscale=colorscale, point_size=3
+    )
+    
+    return fig
