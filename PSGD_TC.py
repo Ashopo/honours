@@ -179,7 +179,7 @@ class PSGD_TC(Optimizer):
         direction = hypersphere_sample(dim)
         
         alpha = 2 if alpha >= 2 else alpha
-        scale = 
+        scale = 0
         #scale = 0.05/alpha
         levy_r = levy_stable.rvs(alpha, 0, scale=scale, size=dim)
         levy_r = np.sqrt(sum(levy_r**2))

@@ -35,6 +35,7 @@ class ADAM_TC(Optimizer):
         self.height = height
         self.width_denom = -0.5*(1/width)**2
         self.n_epochs = n_epochs
+        self.grad_record = None
         
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, amsgrad=amsgrad,
@@ -65,8 +66,9 @@ class ADAM_TC(Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-
+        count = 0
         for group in self.param_groups:
+            print('group')
             params_with_grad = []
             grads = []
             exp_avgs = []
@@ -76,6 +78,8 @@ class ADAM_TC(Optimizer):
             beta1, beta2 = group['betas']
 
             for p in group['params']:
+                print(count)
+                count += 1
                 if p.grad is not None:
 
                     # Update history
@@ -105,7 +109,9 @@ class ADAM_TC(Optimizer):
                         max_exp_avg_sqs.append(state['max_exp_avg_sq'])
 
                     state_steps.append(state['step'])
-
+            
+            self.grad_record = grads
+            
             self.adam(params_with_grad,
                       grads,
                       exp_avgs,
@@ -132,8 +138,6 @@ class ADAM_TC(Optimizer):
             exp_avg_sqs: List[Tensor],
             max_exp_avg_sqs: List[Tensor],
             state_steps: List[Tensor],
-            # kwonly args with defaults are not supported by functions compiled with torchscript issue #70627
-            # setting this as kwarg for now as functional API is compiled by torch/distributed/optim
             foreach: bool = None,
             capturable: bool = False,
             *,
@@ -145,8 +149,8 @@ class ADAM_TC(Optimizer):
             eps: float,
             maximize: bool):
 
-        if len(params) > 1:
-            raise RuntimeError(f"Should only have 1 parameter set. Parameter set: {params}")
+        # if len(params) > 1:
+        #     raise RuntimeError(f"Should only have 1 parameter set. Parameter set: {params}")
 
         if not all(isinstance(t, torch.Tensor) for t in state_steps):
             raise RuntimeError("API has changed, `state_steps` argument must contain a list of singleton tensors")
@@ -320,7 +324,7 @@ class ADAM_TC(Optimizer):
         levy_r = np.sqrt(sum(levy_r**2))
 
         #print('ADAM ratio:', levy_r/torch.norm(grad), end=' ')
-        print(scale, levy_r, levy_r/scale, alpha)
+        #print(scale, levy_r, levy_r/scale, alpha)
         noise = levy_r * direction
         return noise
 
@@ -330,12 +334,12 @@ class ADAM_TC(Optimizer):
         past = self.history[0:-1]
         Vbias = 0
         
-        t1 = time.perf_counter() # Time performance
+        #t1 = time.perf_counter() # Time performance
         for p in past:
             v = current - p
             Vbias += torch.exp(self.width_denom * torch.dot(v, v.T))
-        t2 = time.perf_counter()
-        print(f"Time for iteration {step}: {t2 - t1}")
+        #t2 = time.perf_counter()
+        #print(f"Time for iteration {step}: {t2 - t1}")
         
         Vbias = float(self.height * Vbias)
         self.Vbias = Vbias
