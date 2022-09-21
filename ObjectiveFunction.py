@@ -29,7 +29,7 @@ class OptimisationProblem():
                 raise ValueError("Given optimiser already has a custom metric. Cannot specify another metric.")
             self.metric = opt._metric
 
-    def run(self):
+    def run(self, logs=True):
         func = self.func
         opt = self.opt
         losses, params, preds = [], [], []
@@ -45,7 +45,7 @@ class OptimisationProblem():
             losses.append(float(loss))
             params.append(list(func.parameters())[0].detach().clone().numpy())
             preds.append(float(pred))
-            if i % update_count == 0: print(i)
+            if logs and i % update_count == 0: print(i)
         
         params = [list(_) for _ in list(zip(*params))]
 
@@ -176,7 +176,7 @@ class PeriodicObjectiveFunction(nn.Module):
     @torch.no_grad()
     def pbc(self, X):
         
-        X[X >= 0] = X[X>0] - self.bounds * torch.floor(X[X>0]/self.bounds + 0.5)
+        X[X >= 0] = X[X>=0] - self.bounds * torch.floor(X[X>=0]/self.bounds + 0.5)
         X[X < 0] = X[X<0] - self.bounds * torch.ceil(X[X<0]/self.bounds - 0.5)
         
         return X
@@ -312,3 +312,34 @@ class LinearRegression(PeriodicObjectiveFunction):
         ypreds = ypreds[:,None]
 
         return ypreds
+
+class Hodgkinson(PeriodicObjectiveFunction):
+
+    def __init__(self, start, bounds=None):
+
+        super().__init__(start, bounds)
+    
+    def forward(self, data, X=None):
+
+        if X is None:
+            X = self.weights
+
+        v = self.apply_period(X - data)
+        Z = torch.sum(torch.sum(0.1*v**2 + 1 - torch.cos(0.3*v**2), dim=1)) 
+        
+        return Z
+        
+class AdjustableWell(PeriodicObjectiveFunction):
+
+    def __init__(self, start, bounds=None):
+
+        super().__init__(start, bounds)
+    
+    def forward(self, X=None):
+
+        X = self.forward_init(X)
+        Z = torch.sum(torch.sum(0.1*X**4, dim=1)) 
+        
+        return Z
+    
+

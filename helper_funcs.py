@@ -9,6 +9,18 @@ from scipy.signal import savgol_filter
 def nested_list_to_vectors(arr: List):
     return [np.array(x) for x in zip(*arr)]
 
+def vectors_to_nested_list(arr: List):
+    """ 
+    Given [(x_1, y_1), (x_2, y_2)] get [[x_1, x_2], [y_1,y_]]
+    Opposite of above.
+    """
+    ndim = len(arr[0])
+    nested_list = []
+    for n in range(ndim):
+        nested_list.append([x[n] for x in arr])
+    
+    return nested_list
+
 def apply_dimensionwise(arr: List, func: Callable, **kwargs):
     """
     Accepts a list of Iterables. Each list corresponds to data in 1 dimension.
