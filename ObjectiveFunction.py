@@ -108,8 +108,11 @@ class OptimisationProblem():
             X = np.arange(xlim[0], xlim[1], res)
             Y = np.arange(ylim[0], ylim[1], res)
             grid = [np.array(_) for _ in itertools.product(X,Y)]
-            Z = [float(self.func.forward(torch.Tensor(_))) for _ in grid]
+            Z = [float(self.func.forward(torch.Tensor(_))) for _ in grid]                
             Z = np.array(Z).reshape(len(X), len(Y)).T
+
+            if isinstance(self.func, Rosenbrock): 
+                Z = np.log(Z)
 
             fig.add_trace(fig1.data[0], row=1, col=1)
             fig.add_trace(
@@ -269,7 +272,6 @@ class Ackley(PeriodicObjectiveFunction):
 
         return z
 
-
 class Rosenbrock(PeriodicObjectiveFunction):
     """
     Non-symmetric minima valley.
@@ -294,21 +296,21 @@ class Rosenbrock(PeriodicObjectiveFunction):
 
 class LinearRegression(PeriodicObjectiveFunction):
 
-    def __init__(self, start, Xdata, bounds=None):
-
+    def __init__(self, start, bounds=None):
+        
+        start = torch.tensor(start, requires_grad=True, dtype=torch.float64)
         super().__init__(start, bounds)
-        self.Xdata = Xdata
         """
         Xdata can be a matrix of input. Assume each row is a separate input.
         Assume each column holds each input's corresponding coordinate.
+        Does not enforce PBCs, bounds superfluous.
         """
 
-    def forward(self, w=None):
+    def forward(self, Xdata, w=None):
 
         if w is None:
             w = self.weights
-
-        ypreds = torch.matmul(self.Xdata, w[0:-1]) + w[-1]
+        ypreds = torch.matmul(Xdata, w[0:-1]) + w[-1]
         ypreds = ypreds[:,None]
 
         return ypreds
@@ -328,17 +330,36 @@ class Hodgkinson(PeriodicObjectiveFunction):
         Z = torch.sum(torch.sum(0.1*v**2 + 1 - torch.cos(0.3*v**2), dim=1)) 
         
         return Z
-        
-class AdjustableWell(PeriodicObjectiveFunction):
+    
+class Quadratic(PeriodicObjectiveFunction):
 
     def __init__(self, start, bounds=None):
-
         super().__init__(start, bounds)
     
-    def forward(self, X=None):
+    def forward(self, data, X=None):
 
-        X = self.forward_init(X)
-        Z = torch.sum(torch.sum(0.1*X**4, dim=1)) 
+        if X is None:
+            X = self.weights
+
+        v = self.apply_period(X - data)
+        Z = torch.sum(v**2, dim=0)
+
+        return Z    
+
+class AdjustableWell(PeriodicObjectiveFunction):
+
+    def __init__(self, start, well_width, bounds=None):
+        
+        self.well_width = well_width
+        super().__init__(start, bounds)
+    
+    def forward(self, data, X=None):
+        
+        if X is None:
+            X = self.weights
+
+        v = self.apply_period(X - data)
+        Z = torch.sum(torch.sum(torch.exp(-v**2/self.well_width), dim=1)) 
         
         return Z
     
